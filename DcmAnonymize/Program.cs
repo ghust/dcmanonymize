@@ -25,6 +25,8 @@ namespace DcmAnonymize
 
             [Option('p', "parallelism", Default = 8, HelpText = "Process this many files in parallel")]
             public int Parallelism { get; set; }
+            
+
         }
         // ReSharper restore UnusedAutoPropertyAccessor.Global
         // ReSharper restore MemberCanBePrivate.Global
@@ -115,14 +117,21 @@ namespace DcmAnonymize
                 }
             }
 
+            if (file.Name == "DICOMDIR" || dicomFile.FileMetaInfo.MediaStorageSOPClassUID == DicomUID.MediaStorageDirectoryStorage)
+            {
+                // Do not anonymize DICOM directory files, just delete them.
+                // TODO also anonymize this DICOMDIR
+                File.Delete(file.FullName);
+                return;
+            }
+
             try
             {
-                await anonymizer.AnonymizeAsync(dicomFile.Dataset);
+                await anonymizer.AnonymizeAsync(dicomFile.FileMetaInfo, dicomFile.Dataset);
             }
             catch (Exception e)
             {
-                await Console.Error.WriteLineAsync("Failed to generate anonymous data for the provided DICOM file");
-                await Console.Error.WriteLineAsync(e.ToString());
+                await Console.Error.WriteLineAsync($"Failed to generate anonymous data for the provided DICOM file: {file.FullName}\n{e}");
                 return;
             }
 
@@ -132,8 +141,7 @@ namespace DcmAnonymize
             }
             catch (Exception e)
             {
-                await Console.Error.WriteLineAsync("Failed to overwrite the original DICOM file");
-                await Console.Error.WriteLineAsync(e.ToString());
+                await Console.Error.WriteLineAsync($"Failed to overwrite the original DICOM file: {file.FullName}\n{e}");
                 return;
             }
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices.ComTypes;
 using System.Threading.Tasks;
 using DcmAnonymize.Names;
 using Dicom;
@@ -19,9 +20,9 @@ namespace DcmAnonymize.Patient
             _randomNameGenerator = randomNameGenerator ?? throw new ArgumentNullException(nameof(randomNameGenerator));
         }
 
-        public async Task AnonymizeAsync(DicomDataset dicomDataSet)
+        public async Task AnonymizeAsync(DicomFileMetaInformation metaInfo, DicomDataset dicomDataSet)
         {
-            var originalPatientName = dicomDataSet.GetSingleValue<string>(DicomTag.PatientName);
+            var originalPatientName = dicomDataSet.GetSingleValue<string>(DicomTag.PatientName).TrimEnd();
     
             if (!_anonymizedPatients.TryGetValue(originalPatientName, out var anonymizedPatient))
             {
@@ -34,7 +35,7 @@ namespace DcmAnonymize.Patient
 
                         anonymizedPatient.Name = _randomNameGenerator.GenerateRandomName();
                         anonymizedPatient.BirthDate = GenerateRandomBirthdate();
-                        anonymizedPatient.PatientId = $"PAT{DateTime.Now:yyyyMMdd}{_counter++}";
+                        anonymizedPatient.PatientId = $"PAT{DateTime.Now:yyyyMMddHHmm}{_counter++}";
                         anonymizedPatient.NationalNumber = GenerateRandomNationalNumber(anonymizedPatient.BirthDate);
 
                         _anonymizedPatients[originalPatientName] = anonymizedPatient;
@@ -43,16 +44,32 @@ namespace DcmAnonymize.Patient
             }
 
             dicomDataSet.AddOrUpdate(new DicomPersonName(DicomTag.PatientName, anonymizedPatient.Name.LastName, anonymizedPatient.Name.FirstName));
-            dicomDataSet.AddOrUpdate(DicomTag.PatientBirthDate, anonymizedPatient.BirthDate);
+            dicomDataSet.AddOrUpdate(DicomTag.PatientBirthDate, anonymizedPatient.BirthDate.ToString("yyyyMMdd"));
+            dicomDataSet.AddOrUpdate(DicomTag.PatientID, anonymizedPatient.PatientId);
+            dicomDataSet.Remove(DicomTag.PatientAddress);
+            dicomDataSet.Remove(DicomTag.MilitaryRank);
+            dicomDataSet.Remove(DicomTag.PatientTelephoneNumbers);
             dicomDataSet.AddOrUpdate(DicomTag.OtherPatientIDsRETIRED, anonymizedPatient.NationalNumber);
-            dicomDataSet.AddOrUpdate(new DicomSequence(DicomTag.OtherPatientIDsSequence, new DicomDataset
-            {
-                { DicomTag.PatientID, anonymizedPatient.NationalNumber }
-            }));
+            dicomDataSet.AddOrUpdate(new DicomSequence(DicomTag.OtherPatientIDsSequence, 
+                new DicomDataset {
+                    { DicomTag.PatientID, anonymizedPatient.PatientId },
+                    { DicomTag.IssuerOfPatientID, "DcmAnonymize" },
+                    { DicomTag.TypeOfPatientID, "PATIENTID" }
+                },
+                new DicomDataset {
+                    { DicomTag.PatientID, anonymizedPatient.NationalNumber },
+                    { DicomTag.IssuerOfPatientID, "DcmAnonymize" },
+                    { DicomTag.TypeOfPatientID, "NATIONALNUMBER" }
+                }
+            ));
+            dicomDataSet.AddOrUpdate(DicomTag.PatientIdentityRemoved, "YES");
+            dicomDataSet.AddOrUpdate(DicomTag.DeidentificationMethod, $"DcmAnonymize {typeof(DicomAnonymizer).Assembly.GetName().Version}");
+            dicomDataSet.Remove(DicomTag.DeidentificationMethodCodeSequence);
         }
         
         private DateTime GenerateRandomBirthdate()
         {
+            // A random age between 18 and 80
             var ageInDays = TimeSpan.FromDays(_random.Next(18 * 365, 80 * 365));
             return DateTime.Today.Add(-ageInDays);
         }
